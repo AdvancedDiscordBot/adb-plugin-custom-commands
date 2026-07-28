@@ -1,7 +1,7 @@
 {
   "name": "adb-plugin-custom-commands",
-  "version": "1.0.0",
-  "description": "One-line description of what this plugin does.",
+  "version": "1.1.0",
+  "description": "Create custom slash, text, and context menu commands with variable templates and embed responses.",
   "main": "index.js",
   "files": [
     "index.js",

@@ -1,9 +1,53 @@
 {
 	"name": "adb-plugin-custom-commands",
 	"displayName": "Custom Commands",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Create custom slash, text, and context menu commands with variable templates and embed responses.",
-	"author": "ADB",
+	"author": "DeadIndian",
 	"license": "AGPL-3.0-only",
-	"discordPermissions": ["SendMessages", "ManageGuild", "UseApplicationCommands"]
+	"main": "index.js",
+	"requiresRestart": false,
+	"manifestVersion": 2,
+	"process": {
+		"model": "pooled",
+		"maxExecutionMs": 5000,
+		"memoryMb": 128,
+		"persistentReason": null
+	},
+	"capabilities": {
+		"storage": ["own-collection"],
+		"discord": ["SendMessages", "ManageGuild", "UseApplicationCommands"],
+		"hooks": ["subscribe"]
+	},
+	"permissions": {
+		"storage": ["own-collection"],
+		"discord": ["SendMessages", "ManageGuild", "UseApplicationCommands"],
+		"hooks": ["subscribe"],
+		"network": { "outbound": [] },
+		"filesystem": { "read": [], "write": [] },
+		"childProcess": false,
+		"nativeAddons": false
+	},
+	"declaredDependencies": [],
+	"discordPermissions": ["SendMessages", "ManageGuild", "UseApplicationCommands"],
+	"engines": {
+		"core": ">=2.0.0",
+		"plugins": { "administration": ">=2.0.0" }
+	},
+	"settings": {
+		"commandPermissions": true,
+		"schema": [
+			{ "key": "prefix", "type": "string", "label": "Text command prefix", "default": "!" }
+		]
+	},
+	"configSchema": {
+		"type": "object",
+		"properties": {
+			"prefix": {
+				"type": "string",
+				"default": "!",
+				"description": "Prefix for text commands"
+			}
+		}
+	}
 }
