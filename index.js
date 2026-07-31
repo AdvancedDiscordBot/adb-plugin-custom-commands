@@ -191,8 +191,17 @@ async function load(ctx) {
 	ctx.registerEvent("messageCreate", async (message) => {
 		if (message.author.bot || !message.guild) return;
 
-		// Default prefix is "!"
-		const prefix = "!";
+		// Text-command prefix is configured from the dashboard (settings.prefix).
+		// Falls back to "!" when unset. Read per-message so live edits apply
+		// without a reload.
+		let prefix = "!";
+		try {
+			const cfg = await ctx.db.getPluginConfig(message.guild.id, "adb-plugin-custom-commands");
+			const p = cfg?.data?.prefix;
+			if (typeof p === "string" && p.length > 0) prefix = p;
+		} catch (err) {
+			ctx.logger.error("Failed to read custom-commands prefix config:", err);
+		}
 		if (!message.content.startsWith(prefix)) return;
 
 		const args = message.content.slice(prefix.length).trim().split(/ +/);

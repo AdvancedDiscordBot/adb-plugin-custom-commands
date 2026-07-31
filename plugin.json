@@ -1,7 +1,7 @@
 {
 	"name": "adb-plugin-custom-commands",
 	"displayName": "Custom Commands",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"description": "Create custom slash, text, and context menu commands with variable templates and embed responses.",
 	"author": "DeadIndian",
 	"license": "AGPL-3.0-only",
@@ -38,6 +38,13 @@
 		"commandPermissions": true,
 		"schema": [
 			{ "key": "prefix", "type": "string", "label": "Text command prefix", "default": "!" }
+		]
+	},
+	"dashboard": {
+		"permissions": [
+			{ "key": "view", "label": "View", "description": "See custom commands and their responses." },
+			{ "key": "configure", "label": "Configure", "description": "Change the text command prefix and plugin settings." },
+			{ "key": "manage-commands", "label": "Manage commands", "description": "Create, edit, and delete custom commands." }
 		]
 	},
 	"configSchema": {
