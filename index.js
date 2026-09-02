@@ -1,6 +1,24 @@
 const { EmbedBuilder } = require("discord.js");
 const { createCustomCommandControl } = require("./commands/customcommand");
 const customCommandSchema = require("./models/customCommand");
+const usageSchema = require("./models/usage");
+
+// Set in load(); shared by both execution paths below. A stats write must
+// never break the command itself, so failures are logged and swallowed.
+let UsageModel = null;
+
+async function trackUsage(ctx, guildId, userId, name) {
+	if (!UsageModel) return;
+	try {
+		await UsageModel.findOneAndUpdate(
+			{ guildId, userId, name },
+			{ $inc: { uses: 1 }, $set: { lastUsedAt: new Date() } },
+			{ upsert: true }
+		);
+	} catch (err) {
+		ctx.logger.error(`Failed to record usage for custom command ${name}:`, err);
+	}
+}
 
 /**
  * Replace template variables in the response content.
@@ -54,6 +72,7 @@ function replaceVariables(template, { user, guild, args = [], timestamp, targetU
  */
 async function executeCustomCommand(interaction, cmd, ctx) {
 	try {
+		await trackUsage(ctx, interaction.guildId, interaction.user.id, cmd.name);
 		let args = [];
 		let targetUser = null;
 		let targetMessage = null;
@@ -103,6 +122,7 @@ async function executeCustomCommand(interaction, cmd, ctx) {
  */
 async function executeCustomTextCommand(message, cmd, args, ctx) {
 	try {
+		await trackUsage(ctx, message.guild.id, message.author.id, cmd.name);
 		const processed = replaceVariables(cmd.response, {
 			user: message.author,
 			guild: message.guild,
@@ -171,6 +191,7 @@ function registerGlobalSlashExecutor(client, CustomCommandModel, name, ctx) {
  */
 async function load(ctx) {
 	const CustomCommandModel = ctx.defineModel("customCommand", customCommandSchema);
+	UsageModel = ctx.defineModel("usage", usageSchema);
 
 	// Register the /customcommand control command
 	ctx.registerCommand(

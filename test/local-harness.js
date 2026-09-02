@@ -278,7 +278,37 @@ async function main() {
 
 	console.log("✅ Custom command edit tests passed");
 
-	// 9. Test /customcommand delete
+	// 9. Test per-user usage tracking (both execution paths)
+	const UsageModel = models.get("plugin_adb-plugin-custom-commands_usage");
+	assert.ok(UsageModel, "expected usage model to be defined");
+
+	// Fire the text command "pong" twice as a distinct invoker
+	const usageUser = { id: "usage-user", username: "usageguy", bot: false };
+	for (let i = 0; i < 2; i++) {
+		await emitEvent("messageCreate", {
+			content: "!pong tracked fire",
+			author: usageUser,
+			guild: { id: "test-guild", name: "Test Server" },
+			reply: async (payload) => payload,
+		});
+	}
+
+	// Fire the slash command "greet" once as the same invoker
+	const usageSlashInteraction = fakeSlashInteraction("greet", { args: "hi" }, "test-guild", usageUser, ctx.client);
+	await greetExecutor.execute(usageSlashInteraction);
+
+	const usageDocs = await UsageModel.find({ userId: "usage-user" });
+	assert.strictEqual(usageDocs.length, 2, "expected one usage doc per command name");
+	const byName = Object.fromEntries(usageDocs.map((d) => [d.name, d]));
+	assert.strictEqual(byName.pong.uses, 2, "expected pong uses count of 2");
+	assert.strictEqual(byName.greet.uses, 1, "expected greet uses count of 1");
+	assert.strictEqual(byName.pong.guildId, "test-guild", "expected usage doc scoped to the guild");
+	assert.ok(byName.pong.lastUsedAt, "expected lastUsedAt to be set");
+	assert.ok(byName.greet.lastUsedAt, "expected lastUsedAt to be set");
+
+	console.log("✅ Per-user usage tracking tests passed");
+
+	// 10. Test /customcommand delete
 	const deleteInteraction = fakeControlInteraction({
 		subcommand: "delete",
 		options: { name: "greet" },
