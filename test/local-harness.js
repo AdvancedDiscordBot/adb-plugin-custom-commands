@@ -10,6 +10,7 @@ function fakeControlInteraction({ subcommand, options = {}, guildId = "test-guil
 		guildId,
 		user,
 		client,
+		memberPermissions: { has: () => true },
 		guild: {
 			name: "Test Server",
 			commands: {
@@ -31,6 +32,8 @@ function fakeControlInteraction({ subcommand, options = {}, guildId = "test-guil
 			replies.push(payload);
 			return payload;
 		},
+		deferReply: async function () { this.deferred = true; },
+		editReply: async (payload) => { replies.push(payload); return payload; },
 		followUp: async (payload) => {
 			replies.push(payload);
 			return payload;
@@ -57,6 +60,8 @@ function fakeSlashInteraction(commandName, options = {}, guildId = "test-guild",
 			replies.push(payload);
 			return payload;
 		},
+		deferReply: async function () { this.deferred = true; },
+		editReply: async (payload) => { replies.push(payload); return payload; },
 		followUp: async (payload) => {
 			replies.push(payload);
 			return payload;
@@ -82,6 +87,8 @@ function fakeUserContextMenuInteraction(commandName, targetUser, guildId = "test
 			replies.push(payload);
 			return payload;
 		},
+		deferReply: async function () { this.deferred = true; },
+		editReply: async (payload) => { replies.push(payload); return payload; },
 		replies,
 	};
 }
@@ -103,6 +110,8 @@ function fakeMessageContextMenuInteraction(commandName, targetMessage, guildId =
 			replies.push(payload);
 			return payload;
 		},
+		deferReply: async function () { this.deferred = true; },
+		editReply: async (payload) => { replies.push(payload); return payload; },
 		replies,
 	};
 }
@@ -319,6 +328,7 @@ async function main() {
 
 	console.log("✅ Custom command deletion tests passed");
 
+	await require("./regressions")();
 	console.log("🎉 All plugin tests completed successfully!");
 }
 

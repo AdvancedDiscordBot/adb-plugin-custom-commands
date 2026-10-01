@@ -1,14 +1,9 @@
 const { EmbedBuilder } = require("discord.js");
-const { createCustomCommandControl } = require("./commands/customcommand");
+const { createCustomCommandControl, commandData, respond } = require("./commands/customcommand");
 const customCommandSchema = require("./models/customCommand");
 const usageSchema = require("./models/usage");
 
-// Set in load(); shared by both execution paths below. A stats write must
-// never break the command itself, so failures are logged and swallowed.
-let UsageModel = null;
-
-async function trackUsage(ctx, guildId, userId, name) {
-	if (!UsageModel) return;
+async function trackUsage(ctx, UsageModel, guildId, userId, name) {
 	try {
 		await UsageModel.findOneAndUpdate(
 			{ guildId, userId, name },
@@ -24,24 +19,13 @@ async function trackUsage(ctx, guildId, userId, name) {
  * Replace template variables in the response content.
  */
 function replaceVariables(template, { user, guild, args = [], timestamp, targetUser, targetMessage }) {
-	let result = template;
-
-	// Replace {user}
-	const userMention = user ? `<@${user.id}>` : "";
-	result = result.replace(/\{user\}/g, userMention);
-
-	// Replace {server}
-	const serverName = guild ? guild.name : "";
-	result = result.replace(/\{server\}/g, serverName);
-
-	// Replace {timestamp}
-	const tsStr = `<t:${Math.floor((timestamp || Date.now()) / 1000)}:f>`;
-	result = result.replace(/\{timestamp\}/g, tsStr);
-
-	// Replace {args:N}
-	const argsRegex = /\{args:(\d+)\}/g;
-	result = result.replace(argsRegex, (match, nStr) => {
-		const n = parseInt(nStr, 10);
+	// Only placeholders in the template are expanded; inserted values stay literal.
+	return template.replace(/\{(user|server|timestamp|args:(?:all|\d+))\}/g, (_match, variable) => {
+		if (variable === "user") return user ? `<@${user.id}>` : "";
+		if (variable === "server") return guild ? guild.name : "";
+		if (variable === "timestamp") return `<t:${Math.floor((timestamp || Date.now()) / 1000)}:f>`;
+		if (variable === "args:all") return args.join(" ");
+		const n = parseInt(variable.slice(5), 10);
 		if (args && args[n - 1] !== undefined) {
 			return args[n - 1];
 		}
@@ -60,19 +44,14 @@ function replaceVariables(template, { user, guild, args = [], timestamp, targetU
 		}
 		return "";
 	});
-
-	// Replace {args:all} as a convenience helper
-	result = result.replace(/\{args:all\}/g, args.join(" "));
-
-	return result;
 }
 
 /**
  * Executes a custom slash or context menu command.
  */
-async function executeCustomCommand(interaction, cmd, ctx) {
+async function executeCustomCommand(interaction, cmd, ctx, UsageModel) {
 	try {
-		await trackUsage(ctx, interaction.guildId, interaction.user.id, cmd.name);
+		await trackUsage(ctx, UsageModel, interaction.guildId, interaction.user.id, cmd.name);
 		let args = [];
 		let targetUser = null;
 		let targetMessage = null;
@@ -86,7 +65,7 @@ async function executeCustomCommand(interaction, cmd, ctx) {
 			targetMessage = interaction.targetMessage;
 		}
 
-		const processed = replaceVariables(cmd.response, {
+		let processed = replaceVariables(cmd.response, {
 			user: interaction.user,
 			guild: interaction.guild,
 			args,
@@ -94,23 +73,21 @@ async function executeCustomCommand(interaction, cmd, ctx) {
 			targetUser,
 			targetMessage,
 		});
+		const maxLength = cmd.embed ? 4096 : 2000;
+		if (processed.length > maxLength) processed = `${processed.slice(0, maxLength - 3)}...`;
 
 		if (cmd.embed) {
 			const embed = new EmbedBuilder()
 				.setDescription(processed)
 				.setColor(0x5865F2);
-			await interaction.reply({ embeds: [embed] });
+			await respond(interaction, { embeds: [embed] });
 		} else {
-			await interaction.reply({ content: processed });
+			await respond(interaction, { content: processed });
 		}
 	} catch (error) {
 		ctx.logger.error(`Error executing custom command ${cmd.name}:`, error);
 		try {
-			if (interaction.replied || interaction.deferred) {
-				await interaction.followUp({ content: "❌ Failed to execute custom command.", ephemeral: true });
-			} else {
-				await interaction.reply({ content: "❌ Failed to execute custom command.", ephemeral: true });
-			}
+			await respond(interaction, { content: "❌ Failed to execute custom command.", ephemeral: true });
 		} catch (e) {
 			ctx.logger.error("Failed to send error reply:", e);
 		}
@@ -120,15 +97,17 @@ async function executeCustomCommand(interaction, cmd, ctx) {
 /**
  * Executes a custom text (prefix) command.
  */
-async function executeCustomTextCommand(message, cmd, args, ctx) {
+async function executeCustomTextCommand(message, cmd, args, ctx, UsageModel) {
 	try {
-		await trackUsage(ctx, message.guild.id, message.author.id, cmd.name);
-		const processed = replaceVariables(cmd.response, {
+		await trackUsage(ctx, UsageModel, message.guild.id, message.author.id, cmd.name);
+		let processed = replaceVariables(cmd.response, {
 			user: message.author,
 			guild: message.guild,
 			args,
 			timestamp: Date.now(),
 		});
+		const maxLength = cmd.embed ? 4096 : 2000;
+		if (processed.length > maxLength) processed = `${processed.slice(0, maxLength - 3)}...`;
 
 		if (cmd.embed) {
 			const embed = new EmbedBuilder()
@@ -148,41 +127,18 @@ async function executeCustomTextCommand(message, cmd, args, ctx) {
 	}
 }
 
-/**
- * Register a custom slash command executor in client.commands.
- */
-function registerGlobalSlashExecutor(client, CustomCommandModel, name, ctx) {
-	if (!client.commands.has(name)) {
-		client.commands.set(name, {
-			data: {
-				name: name,
-				description: "Custom slash command",
-				options: [
-					{
-						name: "args",
-						type: 3, // STRING
-						description: "Arguments for the command",
-						required: false,
-					},
-				],
-				toJSON() {
-					return this;
-				},
-			},
-			async execute(interaction) {
-				const dbCmd = await CustomCommandModel.findOne({
-					guildId: interaction.guildId,
-					name: interaction.commandName,
-					type: "slash",
-				});
-				if (dbCmd) {
-					await executeCustomCommand(interaction, dbCmd, ctx);
-				} else {
-					await interaction.reply({ content: "❌ Custom command not found in this server.", ephemeral: true });
-				}
-			},
-		});
-	}
+function commandAllowed(config, name, member) {
+	const command = config?._commands?.[name];
+	if (config?.enabled === false || command?.enabled === false) return false;
+	if (command?.enabled !== undefined && typeof command.enabled !== "boolean") return false;
+	const allowedRoles = command?.allowedRoles;
+	if (allowedRoles === undefined) return true;
+	if (!Array.isArray(allowedRoles) || !allowedRoles.every((role) => typeof role === "string")) return false;
+	if (!allowedRoles.length) return true;
+	const roles = member?.roles;
+	return Array.isArray(roles)
+		? roles.some((id) => allowedRoles.includes(id))
+		: !!roles?.cache?.some((role) => allowedRoles.includes(role.id));
 }
 
 /**
@@ -191,44 +147,137 @@ function registerGlobalSlashExecutor(client, CustomCommandModel, name, ctx) {
  */
 async function load(ctx) {
 	const CustomCommandModel = ctx.defineModel("customCommand", customCommandSchema);
-	UsageModel = ctx.defineModel("usage", usageSchema);
+	const UsageModel = ctx.defineModel("usage", usageSchema);
+	const registrations = new Map();
+	const handled = new WeakSet();
+	let active = true;
+	let refreshQueue = Promise.resolve();
+	const registry = {
+		conflict(name, type) {
+			const current = ctx.client.commands.get(name);
+			const own = registrations.get(name);
+			if (current && current !== own) return `Command name \`${name}\` is already registered by another command or plugin.`;
+			if (own && own.data.type !== { slash: 1, user: 2, message: 3 }[type]) return `Command name \`${name}\` already has a conflicting application command type.`;
+			return null;
+		},
+		owns(cmd) {
+			const own = registrations.get(cmd.name);
+			return active && own && ctx.client.commands.get(cmd.name) === own && own.guildIds.includes(cmd.guildId) && !registry.conflict(cmd.name, cmd.type);
+		},
+		async execute(interaction, name, expectedType) {
+			if (!active || handled.has(interaction)) return;
+			handled.add(interaction);
+			const type = interaction.isChatInputCommand() ? "slash" : interaction.isUserContextMenuCommand() ? "user" : interaction.isMessageContextMenuCommand() ? "message" : null;
+			if (type !== expectedType || !registry.owns({ name, type, guildId: interaction.guildId })) {
+				return respond(interaction, { content: "Custom command not found in this server.", ephemeral: true });
+			}
+			try {
+				if (!interaction.deferred && !interaction.replied) await interaction.deferReply();
+				const config = await ctx.db.getPluginConfig(interaction.guildId, "adb-plugin-custom-commands");
+				if (!commandAllowed(config?.data, name, interaction.member)) {
+					return respond(interaction, { content: "This command is disabled or you do not have the required role.", ephemeral: true });
+				}
+				const dbCmd = await CustomCommandModel.findOne({ guildId: interaction.guildId, name, type });
+				if (!dbCmd) return respond(interaction, { content: "Custom command not found in this server.", ephemeral: true });
+				await executeCustomCommand(interaction, dbCmd, ctx, UsageModel);
+			} catch (err) {
+				ctx.logger.error(`Custom command ${name} failed:`, err);
+				await respond(interaction, { content: "Failed to execute custom command.", ephemeral: true });
+			}
+		},
+		async refresh() {
+			// Read and apply snapshots in order, including after a failed refresh.
+			const previous = refreshQueue;
+			let release;
+			refreshQueue = new Promise((resolve) => { release = resolve; });
+			await previous;
+			try {
+				if (!active) return;
+				const commands = await CustomCommandModel.find({});
+				if (!active) return;
+				for (const own of registrations.values()) own.guildIds = [];
+				for (const cmd of commands) {
+					if (cmd.type === "text") continue;
+					try {
+						const conflict = registry.conflict(cmd.name, cmd.type);
+						if (conflict) throw new Error(conflict);
+						const data = commandData(cmd);
+						let own = registrations.get(cmd.name);
+						if (!own) {
+							const command = {
+								data, guildIds: [cmd.guildId], guildData: { [cmd.guildId]: data },
+								execute: (interaction) => registry.execute(interaction, cmd.name, cmd.type),
+							};
+							ctx.registerCommand(command);
+							own = ctx.client.commands.get(cmd.name);
+							registrations.set(cmd.name, own);
+						}
+						if (!own.guildIds.length) {
+							own.data = data;
+							own.guildData = {};
+						}
+						if (!own.guildIds.includes(cmd.guildId)) own.guildIds.push(cmd.guildId);
+						own.guildData[cmd.guildId] = data;
+					} catch (err) {
+						ctx.logger.warn(`Skipping custom command ${cmd.name} in ${cmd.guildId}:`, err.message);
+					}
+				}
+				for (const [name, own] of registrations) {
+					if (own.guildIds.length) continue;
+					if (ctx.client.commands.get(name) === own) ctx.client.commands.delete(name);
+					registrations.delete(name);
+				}
+			} finally {
+				release();
+			}
+		},
+	};
 
 	// Register the /customcommand control command
 	ctx.registerCommand(
-		createCustomCommandControl(CustomCommandModel, ctx, executeCustomCommand, registerGlobalSlashExecutor),
+		createCustomCommandControl(CustomCommandModel, ctx, registry),
 	);
 
-	// Load existing slash commands and register their executors in client.commands
+	// Persisted commands must enter the same ownership/sync path as new ones.
 	try {
-		const slashCommands = await CustomCommandModel.find({ type: "slash" });
-		for (const cmd of slashCommands) {
-			registerGlobalSlashExecutor(ctx.client, CustomCommandModel, cmd.name, ctx);
-		}
+		await registry.refresh();
 	} catch (err) {
-		ctx.logger.error("Failed to load and register existing custom slash commands:", err);
+		ctx.logger.error("Failed to load and register existing custom commands:", err);
 	}
+	ctx.hooks.on("onPluginUnload", ({ pluginName }) => {
+		if (pluginName !== "adb-plugin-custom-commands") return;
+		active = false;
+		for (const [name, own] of registrations) {
+			own.guildIds = [];
+			if (ctx.client.commands.get(name) === own) ctx.client.commands.delete(name);
+		}
+		registrations.clear();
+	});
 
 	// Register listener for text prefix commands
 	ctx.registerEvent("messageCreate", async (message) => {
-		if (message.author.bot || !message.guild) return;
+		if (!active || !message.author || message.author.bot || !message.guild || typeof message.content !== "string") return;
 
 		// Text-command prefix is configured from the dashboard (settings.prefix).
 		// Falls back to "!" when unset. Read per-message so live edits apply
 		// without a reload.
 		let prefix = "!";
+		let config;
 		try {
 			const cfg = await ctx.db.getPluginConfig(message.guild.id, "adb-plugin-custom-commands");
+			config = cfg?.data;
 			const p = cfg?.data?.prefix;
 			if (typeof p === "string" && p.length > 0) prefix = p;
 		} catch (err) {
 			ctx.logger.error("Failed to read custom-commands prefix config:", err);
+			return;
 		}
 		if (!message.content.startsWith(prefix)) return;
 
 		const args = message.content.slice(prefix.length).trim().split(/ +/);
 		const commandName = args.shift().toLowerCase();
 
-		if (!commandName) return;
+		if (!commandName || !commandAllowed(config, commandName, message.member)) return;
 
 		const dbCmd = await CustomCommandModel.findOne({
 			guildId: message.guild.id,
@@ -237,24 +286,20 @@ async function load(ctx) {
 		});
 
 		if (dbCmd) {
-			await executeCustomTextCommand(message, dbCmd, args, ctx);
+			await executeCustomTextCommand(message, dbCmd, args, ctx, UsageModel);
 		}
 	});
 
 	// Register listener for user/message context menu commands
 	ctx.registerEvent("interactionCreate", async (interaction) => {
-		if (!interaction.guild) return;
+		// The unified core dispatcher owns permission checks and execution when installed.
+		if (ctx.client.runtimeCommandDispatch === true) return;
+		if (!active || !interaction.guild) return;
 
 		if (interaction.isUserContextMenuCommand() || interaction.isMessageContextMenuCommand()) {
 			const type = interaction.isUserContextMenuCommand() ? "user" : "message";
-			const dbCmd = await CustomCommandModel.findOne({
-				guildId: interaction.guildId,
-				name: interaction.commandName,
-				type: type,
-			});
-
-			if (dbCmd) {
-				await executeCustomCommand(interaction, dbCmd, ctx);
+			if (registry.owns({ name: interaction.commandName, type, guildId: interaction.guildId })) {
+				await ctx.client.commands.get(interaction.commandName).execute(interaction);
 			}
 		}
 	});

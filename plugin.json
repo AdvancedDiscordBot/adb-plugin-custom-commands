@@ -9,17 +9,19 @@
 	"requiresRestart": false,
 	"manifestVersion": 2,
 	"process": {
-		"model": "pooled",
-		"maxExecutionMs": 5000,
-		"memoryMb": 128,
-		"persistentReason": null
+		"model": "persistent",
+		"maxExecutionMs": 15000,
+		"memoryMb": 256,
+		"persistentReason": "Runs un-isolated (system:raw-client) to inspect client.commands ownership, create/edit/delete guild application commands, reply to prefix messages, and use full slash/context-menu interactions. These discord.js APIs are outside the sandboxed RPC surface."
 	},
 	"capabilities": {
+		"system": ["raw-client"],
 		"storage": ["own-collection"],
 		"discord": ["SendMessages", "ManageGuild", "UseApplicationCommands"],
 		"hooks": ["subscribe"]
 	},
 	"permissions": {
+		"system": ["raw-client"],
 		"storage": ["own-collection"],
 		"discord": ["SendMessages", "ManageGuild", "UseApplicationCommands"],
 		"hooks": ["subscribe"],
