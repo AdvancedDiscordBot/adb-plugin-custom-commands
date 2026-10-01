@@ -36,6 +36,16 @@ Use the `/customcommand` command group to manage your custom commands:
 - `/customcommand list` — List all registered custom commands for this server.
 - `/customcommand show [name]` — Show configuration details for matching commands.
 
+Management requires the Manage Server permission and defers an ephemeral reply
+before database or Discord API work. Large lists are split across ephemeral
+replies; `show` sends each matching definition separately and shortens long
+fields for display without changing the saved template.
+
+Variables are substituted once: dollar signs and placeholder-like text inside
+arguments, server names, or quoted messages remain literal. Expanded responses
+are shortened with `...` to fit Discord's 2000-character message limit or
+4096-character embed-description limit. Stored templates remain unchanged.
+
 ## Installation & Setup
 
 1. Copy or symlink this directory into the `plugins/` directory of your Advanced Discord Bot folder:
@@ -56,7 +66,48 @@ npm install
 npm test
 ```
 
-This runs the comprehensive local test suite in `test/local-harness.js` using `test/mock-ctx.js` to ensure variables, creation, listing, execution, editing, and deletion work flawlessly.
+This runs the smoke harness and `test/regressions.js` against in-memory storage.
+The regressions check ownership, concurrent refreshes, command restrictions,
+deferred replies, variable expansion, and Discord payload limits.
+
+With a compatible local Core checkout, also run the paired integration suite:
+
+```bash
+ADB_CORE_PATH=/home/dead/Projects/Advanced-Discord-Bot node --test test/core-runtime.test.js
+```
+
+That suite uses the real `PluginManager`, command sync, and dispatcher with fake
+Discord/Mongo I/O. Neither suite is a live Discord or MongoDB test.
+
+## Runtime Integration
+
+This plugin explicitly declares `system:raw-client` in both `permissions` and
+`capabilities`. It requires owner-approved, un-isolated access for guild command
+management, prefix-message replies, and full context-menu interactions. It does
+not require globally disabling plugin isolation.
+
+Current Core treats raw-client plugins as always on and refuses per-guild plugin
+toggles for them. A missing or false top-level config `enabled` flag therefore
+does not disable this plugin. Per-command restrictions live in
+`config.data._commands[name]`; both the application and prefix paths enforce
+their enable flag and allowed roles, rejecting malformed restrictions.
+
+Custom application commands use `ctx.registerCommand` and carry `guildIds` plus
+`guildData[guildId]` (serialized command data, including type `1`, `2`, or `3`).
+Current Core bulk sync filters by `guildIds` and selects `guildData[guildId]`.
+The control command has no guild restriction. Registry refreshes read and apply
+database snapshots serially so a delayed read cannot restore a deleted command.
+Core resolves ownership by the current registration and prunes stale name
+reservations when a new command is registered. It still lacks an unregister API
+to immediately release deleted names from `commandNames`, so dashboard command
+listings can retain deleted names until another registration or unload.
+
+The current name-keyed dispatcher cannot represent multiple application types
+with the same name. Conflicting names are rejected, and colliding persisted
+records are left intact but not registered. Current Core routes context menus
+through its shared permission, cooldown, and hook pipeline. The plugin's context
+listener yields while `client.runtimeCommandDispatch === true`; without that
+dispatcher, the listener delegates to the owned executor as a fallback.
 
 ## License
 
